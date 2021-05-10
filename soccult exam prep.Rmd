@@ -1,0 +1,73 @@
+---
+title: "soccult exam prep"
+author: "Maria"
+date: "10/4/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+pacman::p_load(tidyverse)
+```
+
+
+```{r}
+
+
+x <- list.files(pattern = "*.csv") %>% map_df(~read_csv(.))
+#use the above when each participant in own csv file
+
+
+
+#read experimental data
+pavlovia <- read_csv("id995pavlovia.csv") %>% 
+  subset(select = -c(1:8, 11:16, 20:21, 23:28, 32:37)) %>% #delete some of the columns (20:21 is the extra age and gender)
+  mutate(id = ifelse(id == 995, 370, 1)) #for fun, rename id 995 to 370 because this person actually contains some data from last survey to put in the dataframe :) 
+
+#read survey data
+last <- read_csv("sidstesurvey.csv") %>% 
+  subset(select = -c(1:6, 8:18)) #delete some columns
+
+#merge pavlovia and last survey
+merged <- merge(pavlovia, last) #merged (only one participant in this case due to only one participant in the pavlovia csv)
+
+#play around with accuracy column
+merged <- merged %>% 
+  mutate(typedWord = "business") %>% #put something in the typed word column because it is empty for now
+  mutate(anagram_accuracy = ifelse(typedWord == correct, 1, 0)) %>% #1 for correct solutions, 0 for incorrect 
+  mutate(overall_accuracy = anagram_accuracy) %>% #copy the anagram accuracy to the overall accuracy
+  mutate(overall_accuracy = ifelse(is.na(overall_accuracy), IQ_response.corr, anagram_accuracy)) #add the IQ accuracy where we have missing info 
+
+#play around with phase in menstrual cycle
+#fix class
+merged <- merged %>% 
+  mutate(Days_since_last_mens = as.numeric(Days_since_last_mens)) %>% 
+  mutate(Length_of_cycle = as.numeric(Length_of_cycle))
+         
+#calculate percentage and menstrual phases (rough estimate)
+merged <- merged %>% 
+  mutate(Percentage_cycle = (Days_since_last_mens/Length_of_cycle)*100) %>% #how far along in menstrual cycle
+  mutate(Menstrual_phase = ifelse(Percentage_cycle == 0, "menstruation", NA)) %>% #on their period
+  mutate(Menstrual_phase = ifelse(Percentage_cycle > 0 & Percentage_cycle <= 45, "follicular phase", Menstrual_phase)) %>%  #follicular phase
+  mutate(Menstrual_phase = ifelse(Percentage_cycle > 45 & Percentage_cycle <= 55, "ovulation", Menstrual_phase)) %>%  #ovulation 
+  mutate(Menstrual_phase = ifelse(Percentage_cycle > 55, "luteal phase", Menstrual_phase)) %>%  #luteal phase
+  mutate(Menstrual_phase = ifelse(is.na(Menstrual_phase), "hormonal group", Menstrual_phase)) #add the hormonal group to avoid NAs
+
+
+# https://helloclue.com/articles/cycle-a-z/the-menstrual-cycle-more-than-just-the-period says ovulation occurs midway through period
+# https://www.nhs.uk/common-health-questions/womens-health/how-can-i-tell-when-i-am-ovulating/ says ovulation occurs 10-16 days before period
+
+
+# info on how to deal with NAs https://discourse.mc-stan.org/t/how-to-handle-na-values-in-multivariate-models/18800
+
+class(merged$Percentage_cycle)
+
+
+
+```
+
