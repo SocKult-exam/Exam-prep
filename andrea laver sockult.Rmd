@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 pacman::p_load(tidyverse)
 ```
-
+h
 ```{r}
 pav <- list.files(pattern = "*.csv") %>% map_df(~read_csv(.))
 #use the above when each participant in own csv file
