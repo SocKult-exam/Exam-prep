@@ -1,0 +1,236 @@
+---
+title: "analysetilsockult"
+author: "Andrea"
+date: "5/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(tidyverse)
+```
+h
+```{r}
+pav <- list.files(pattern = "*.csv") %>% map_df(~read_csv(.))
+#use the above when each participant in own csv file
+
+?read.csv2
+
+qual <- read.csv("/Users/andreadioni/Desktop/SocKult eksamen/Exam-prep/Spørgeskema/spørgeskema.csv", fileEncoding = "UTF-8", na.strings=c("","NA"))
+
+id1142_qual <- qual %>% 
+  filter(id == "1142") %>% 
+  filter(ResponseId == "R_vvECwnKwMxcSk0N")
+
+id1142_qual$id[id1142_qual$id == "1142"] <- "54321"
+
+id1142_v2_qual <- qual %>% 
+  filter(id == "1142") %>% 
+  filter(ResponseId == "R_1QJDZuyniqXqIlj")
+
+id1142_v2_qual$id[id1142_v2_qual$id == "1142"] <- "12345"
+```
+
+```{r}
+id1674_qual <- qual %>% 
+  filter(id == "1674") %>% 
+  filter(ResponseId == "R_vvECwnKwMxcSk0N")
+
+id1142_qual$id[id1142_qual$id == "1674"] <- "23456"
+
+id1142_v2_qual <- qual %>% 
+  filter(id == "1674") %>% 
+  filter(ResponseId == "R_1QJDZuyniqXqIlj")
+
+id1142_v2_qual$id[id1142_v2_qual$id == "1142"] <- "65432"
+```
+
+
+```{r}
+#this chunk is only to change the IDs of the duplicate 1142 participants
+qual <- qual %>% 
+  filter(id != "1142")
+
+qual <- qual %>% 
+  subset(EndDate != "2021-04-22 10:54:05")
+
+qual1 <- rbind(qual, id1142_qual)
+rigtigqual <- rbind(qual1, id1142_v2_qual)
+
+
+##try making correct pav
+id1142 <- pav %>% 
+  filter(id == "1142") %>% 
+  filter(date == "2021-05-05_14h41.33.495") %>% 
+  mutate(id = ifelse(id== 1142, 12345, 12345))
+
+id1142_v2 <- pav %>% 
+  filter(id == "1142") %>% 
+  filter(date == "2021-04-30_19h52.39.201") %>% 
+  mutate(id = ifelse(id== 1142, 54321, 54321))
+
+pavlovia2 <- pav %>% 
+  filter(id != "1142")
+
+pavlovia3 <- rbind(pavlovia2, id1142)
+rigtigpav <- rbind(pavlovia3, id1142_v2)
+
+merged <- merge(rigtigqual, rigtigpav)
+
+write.csv(merged,'sockultsamletdata.csv')
+```
+
+```{r}
+start <- read.csv("/Users/andreadioni/Downloads/cleaned.csv")
+
+merged <- subset(merged, anagrammer!="REMOVE" | is.na(anagrammer))
+
+clean <- merged %>% 
+  mutate(More_than_a_year_on_HC = str_extract(merged$Time_since_use, "Mindre")) %>% #make a column for people having been off HC for less than a year
+  subset(More_than_a_year_on_HC != "Mindre" | is.na(More_than_a_year_on_HC)) #include only people not coded in above column
+
+clean <- subset(clean, select = c(id, anagram_answer, RT, anagrammer, correct, IQ_response.keys, IQ_response.corr, options, correctIQanswer, Gender, Age, HC_use, HC_ever, HC_time, Time_since_use, Previous_HC_Time, HC_type, HC_type_8_TEXT, Brand, Generation, Pregnant, Hormonal_disease, Days_since_last_mens, Length_of_cycle, Prediction_ability_1, Att_disease, Dyslexic, Education, IQ_abilities_1, IQ_abilities_2, IQ_abilities_3 ))
+
+clean <- subset(clean, !is.na(clean$RT)) %>% 
+  subset(Att_disease != "Ja") %>% 
+  subset(Pregnant != "Ja") %>% 
+  subset(Hormonal_disease != "Ja") #%>% 
+  
+```
+
+
+```{r}
+data <- data.frame(lapply(clean, function(x) {
+  gsub("<e5>", "aa", x)
+  }))
+
+clean %>% 
+  mutate(Time_since_use = str_replace(Time_since_use, "<e5>r", "aar"))
+
+iconv(clean, from = 'UTF-8', to = 'ASCII//TRANSLIT')
+```
+
+
+```{r}
+#play around with accuracy column
+clean <- clean %>% 
+  mutate(anagram_accuracy = ifelse(anagram_answer == correct, 1, 0)) %>% #1 for correct solutions, 0 for incorrect 
+  mutate(overall_accuracy = anagram_accuracy) %>% #copy the anagram accuracy to the overall accuracy
+  mutate(overall_accuracy = ifelse(is.na(overall_accuracy), IQ_response.corr, anagram_accuracy)) %>%  #add the IQ accuracy where we have missing info 
+  mutate(overall_accuracy = ifelse(is.na(overall_accuracy), 0, overall_accuracy))
+
+#adding 0's to NA values in anagram accuracy
+clean <- clean %>% 
+  mutate(anagram_accuracy = ifelse(is.na(anagram_accuracy), 0, anagram_accuracy))
+
+#play around with phase in menstrual cycle
+#fix class
+clean <- clean %>% 
+  mutate(Days_since_last_mens = as.numeric(Days_since_last_mens)) %>% 
+  mutate(Length_of_cycle = as.numeric(Length_of_cycle))
+         
+#calculate percentage and menstrual phases (rough estimate)
+#calculate percentage and menstrual phases (rough estimate)
+clean <- clean %>% 
+  mutate(Percentage_cycle = (Days_since_last_mens/Length_of_cycle)*100) %>% #how far along in menstrual cycle
+  #(Menstrual_phase = ifelse(Percentage_cycle == 0, "menstruation", NA)) %>% #on their period
+  mutate(Menstrual_phase = ifelse(Percentage_cycle >= 0 & Percentage_cycle <= 45, "follicular phase", NA)) %>%  #follicular phase
+  mutate(Menstrual_phase = ifelse(Percentage_cycle > 45 & Percentage_cycle <= 55, "ovulation", Menstrual_phase)) %>%  #ovulation 
+  mutate(Menstrual_phase = ifelse(Percentage_cycle > 55, "luteal phase", Menstrual_phase)) %>%  #luteal phase
+  mutate(Menstrual_phase = ifelse(is.na(Menstrual_phase), "hormonal group", Menstrual_phase)) #add the hormonal group to avoid NAs
+
+
+# https://helloclue.com/articles/cycle-a-z/the-menstrual-cycle-more-than-just-the-period says ovulation occurs midway through period
+# https://www.nhs.uk/common-health-questions/womens-health/how-can-i-tell-when-i-am-ovulating/ says ovulation occurs 10-16 days before period
+
+clean <- clean %>% 
+  mutate(HC_type = ifelse(is.na(HC_type), "not on HC", HC_type)) %>% 
+  mutate(Brand = ifelse(is.na(Brand), "not on HC", Brand)) %>% 
+  mutate(Generation = ifelse(is.na(Generation), "not on HC", Generation)) %>% 
+  mutate(HC_time = ifelse(is.na(HC_time), "not on HC", HC_time)) %>% 
+  mutate(Prediction_ability_1 = ifelse(is.na(Prediction_ability_1 ), "hormonal group", Prediction_ability_1))
+
+#round to fewer decimal points
+clean <- clean %>% 
+  mutate(RT = round(RT, digits = 5)) #%>% 
+  #mutate(AVG_IQ_Ability = round(AVG_IQ_Ability, digits = 2))
+```
+
+```{r}
+#correcting spelling mistakes etc in the brand column
+clean$Brand[clean$Brand == "2. Microstad/Femicept"] <- "Femicept"
+clean$Brand[clean$Brand == "2. generations p-piller, Femicept"] <- "Femicept"
+clean$Brand[clean$Brand == "femicept"] <- "Femicept"
+clean$Brand[clean$Brand == "Jeg er virkelig ked af det, men jeg kan simpelthen ikke huske det"] <- NA
+clean$Brand[clean$Brand == "var ikke et bestemt mærke, fik det billigste og derfor ikke samme mærke hver gang."] <- NA #virker ikke
+clean$Brand[clean$Brand == "Anastella"] <- "Anastrella"
+clean$Brand[clean$Brand == "Anasrella"] <- "Anastrella"
+
+#write.csv(clean, "clean.csv")
+```
+
+```{r}
+#make average IQ ability column
+clean <- clean %>% 
+  mutate(IQ_abilities_3 = ifelse(is.na(IQ_abilities_3), 50, IQ_abilities_3))  #we infer average abilities for missing values
+
+clean <- clean %>% mutate(AVG_IQ_Ability = (IQ_abilites_1 + IQ_abilities_2 + IQ_abilities_3)/3)
+```
+
+
+
+```{r}
+# info on how to deal with NAs https://discourse.mc-stan.org/t/how-to-handle-na-values-in-multivariate-models/18800
+
+class(merged$Percentage_cycle)
+
+str(clean)
+      
+clean$id = as.factor(right$id)
+clean$HC_ever = as.factor(right$HC_ever)
+
+
+```
+
+
+```{r}
+#summarizing stats
+start %>%
+  group_by(HC_use)%>%
+  dplyr::summarise(participants = length(unique(id)))
+#started out with 93 participants, of whom 48 were on HC and 45 were not. 
+
+start %>%
+  group_by(HC_ever, Time_since_use)%>%
+  dplyr::summarise(participants = length(unique(id)))
+#we sorted out 11 people who had stopped using HC less than 1 year ago
+
+start %>%
+  group_by(Att_disease)%>%
+  dplyr::summarise(participants = length(unique(id)))
+#9 sorted out bcs of ADHD etc
+
+start %>%
+  group_by(Hormonal_disease)%>%
+  dplyr::summarise(participants = length(unique(id)))
+#5 sorted out bcs of hormonal disease such as pcos
+
+start %>%
+  group_by(Pregnant)%>%
+  dplyr::summarise(participants = length(unique(id)))
+#3 sorted out bcs of either pregnancy or breastfeeding
+
+clean %>%
+  group_by(HC_use)%>%
+  dplyr::summarise(participants = length(unique(id)))
+
+clean %>%
+  group_by(HC_ever, HC_type)%>%
+  dplyr::summarise(participants = length(unique(id)))
+
+
+
+
+```
+
