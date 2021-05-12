@@ -1,0 +1,298 @@
+---
+title: "d-ASS"
+author: "Andrea"
+date: "5/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+pacman::p_load("readr", "rethinking", "brms", "tidyverse", "patchwork", "metafor")
+```
+
+## R Markdown
+
+```{r}
+df <- read.csv("final_data_sockult.csv") %>% 
+  subset(RT >= 1) %>% 
+  mutate(RT = ifelse(RT >= 600, 600, RT)) %>% 
+  subset(id != 1741) %>% #remove person with wrong info
+  mutate(Generation = ifelse(HC_type == "Hormonspiral", "Hormonspiral", Generation)) %>% 
+  mutate(Generation = ifelse(HC_type == "Mini-piller", "Mini-piller", Generation)) %>% 
+  mutate(Generation = ifelse(HC_type == "Hvis andet, hvad:", "Nødprævention", Generation)) %>% 
+  mutate(Brand = ifelse(HC_type == "Hormonspiral", "Hormonspiral", Brand)) %>% 
+  mutate(Brand = ifelse(HC_type == "Mini-piller", "Mini-piller", Brand)) %>% 
+  mutate(Brand = ifelse(HC_type == "Hvis andet, hvad:", "Nødprævention", Brand)) %>% 
+  mutate(Task = ifelse(is.na(anagram_accuracy), "IQ", "anagram")) %>% 
+  mutate(Task = as.factor(Task))
+
+df$HC_use <- factor(df$HC_use, levels = c("Nej", "Ja"))
+
+df$HC_type <- as.factor(df$HC_type)
+df$HC_use <- as.factor(df$HC_use)
+
+
+#fix education levels
+levels(df$Education)
+
+#shorten education names
+df <- df %>% 
+  mutate(Education = ifelse(Education == "Kort videregående uddannelse (fx. erhvervsuddannelse på 2 år inkl praktik)", "Kort", Education)) %>% 
+  mutate(Education = ifelse(Education == "Mellemlang videregående uddannelse (fx. bachelor)", "Mellemlang", Education)) %>% 
+  mutate(Education = ifelse(Education == "Lang videregående uddannelse (fx. kandidat el. PhD)", "Lang", Education)) %>% 
+  mutate(Education = as.factor(Education))
+
+#fix education levels
+df$Education <- factor(df$Education, levels = c("Folkeskole", "Gymnasiel uddannelse", "Kort", "Mellemlang", "Lang"))
+
+#subset tasks
+anagram <- df %>% 
+  filter(Task == "anagram")
+
+IQ <- df %>% 
+  filter(Task == "IQ")
+
+
+```
+
+check distribution of outcome variables
+```{r}
+dens(df$RT) #definitely log-normal! 
+dens(df$overall_accuracy)
+
+#check outliers
+m<-mean(df$RT)
+sd<-sd(df$RT)
+out.u<-m+3*sd
+out.l<-m-3*sd
+
+```
+
+checking differences between HC_use
+```{r}
+dens(log(HC_diff$RT))
+
+sd(log(HC_diff$RT))
+mean(log(HC_diff$RT))
+
+HC_diff <- df %>% 
+  subset(HC_use == "Ja")
+
+df$HC_type <- as.factor(df$HC_type)
+
+#make formula
+HC_diff_f <- bf(RT ~ 0 + HC_type + (1 | id))
+
+get_prior(HC_diff_f, data = HC_diff, family = lognormal()) #we get intercept, sd, sd for the population and sd/intercept for population
+
+HC_diff_prior <- c(
+  prior(normal(3.22, 1.2), class = b), 
+  prior(normal(1.2, .6), class = sd),
+  prior(normal(1.2, .6), class = sigma)) 
+
+#make the first model
+HC_diff_m0 <- brm(
+  HC_diff_f,
+  data = HC_diff,
+  family = lognormal,
+  prior = HC_diff_prior,
+  sample_prior = "only", #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 2, #run chains in parallel
+)
+
+p0 <- pp_check(HC_diff_m0, nsamples = 100)
+p0 
+
+plot(conditional_effects(HC_diff_m0), points = T)
+```
+
+
+```{r}
+#make the model with the actual data
+HC_diff_m1 <- brm(
+  HC_diff_f,
+  data = HC_diff,
+  family = lognormal,
+  prior = HC_diff_prior,
+  sample_prior = T, #on all data
+  chains = 2, #to minimize runtime
+  cores = 2, #run chains in parallel
+)
+
+p1 <- pp_check(HC_diff_m1, nsamples = 100)
+p1
+
+plot(conditional_effects(HC_diff_m1), points = T)
+
+summary(HC_diff_m1)
+
+posterior <-  posterior_samples(HC_diff_m1)
+
+#plotting the hormonalspiral and p-piller posteriors
+ggplot(posterior) +
+  theme_classic() +
+  geom_density(aes(prior_b), fill="red", alpha=0.3) +
+  geom_density(aes(b_HC_typeHormonspiral), fill="blue", alpha=0.5)
+
+ggplot(posterior) +
+  theme_classic() +
+  geom_density(aes(prior_b), fill="red", alpha=0.3) +
+  geom_density(aes(b_HC_typePMpiller), fill="blue", alpha=0.5)
+#so prettyyyyyy
+```
+
+MAKE THE RT MODEL FOR ANAGRAm
+```{r}
+#figuring out the informed prior
+sqrt(41.24^2 + 84.95^2) #== 94.43114 #error parameter
+log(94.43114) #== 4.547871 #final error parameter
+
+Sd1log = log(44.14+41.24) - log(44.14)
+Sd2log = log(76.11+84.95) - log(76.11)
+
+sqrt(Sd1log ^2 + Sd2log ^2)
+
+log(44.14) - log(76.11) #mean parameter of -0.544
+
+dens(log(anagram$RT))
+
+#make formula
+RT_f0_anagram <- bf(RT ~ 1 + HC_use + Education + Menstrual_phase  + (1 | id))
+
+get_prior(RT_f0_anagram, data = anagram, family = lognormal()) 
+
+mean(log(anagram$RT))
+sd(log(anagram$RT))
+
+RT_anagram_conservative_prior <- c(
+  prior(normal(2.95, 1), class = Intercept),
+  prior(normal(-0.54, 0.5), class = b, coef = HC_useJa),
+  prior(normal(0, .5), class = b, coef = EducationGymnasieluddannelse),
+  prior(normal(0, .5), class = b, coef = EducationKort),
+  prior(normal(0, .5), class = b, coef = EducationLang),
+  prior(normal(0, .5), class = b, coef = EducationMellemlang),
+  prior(normal(0, .5), class = b, coef = Menstrual_phasehormonalgroup),
+  prior(normal(0, .5), class = b, coef = Menstrual_phaselutealphase),
+  prior(normal(0, .5), class = b, coef = Menstrual_phaseovulation),
+  prior(normal(1, .5), class = sd),
+  prior(normal(1, .5), class = sigma)) 
+
+#make the first model
+RT_anagram_conservative_m0 <- brm(
+  RT_f0_anagram,
+  data = anagram,
+  family = lognormal,
+  prior = RT_anagram_conservative_prior,
+  control = list(
+    max_treedepth = 20),
+  sample_prior = "only", #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 2, #run chains in parallel
+)
+
+pairs(RT_anagram_conservative_m0)
+
+p0 <- pp_check(RT_anagram_conservative_m0, nsamples = 100)
+p0 #pretty much impossible to infer anything from this plot
+
+#make the first model
+RT_anagram_conservative_m1 <- brm(
+  RT_f0_anagram,
+  data = anagram,
+  family = lognormal,
+  prior = RT_anagram_conservative_prior,
+  control = list(
+    max_treedepth = 20),
+  sample_prior = T, #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 2, #run chains in parallel
+)
+
+p1 <- pp_check(RT_anagram_conservative_m1, nsamples = 100)
+p1 #pretty much impossible to infer anything from this plot
+
+posteriorRTanagram <-  posterior_samples(RT_anagram_conservative_m1)
+
+#plotting the hormonalspiral and p-piller posteriors
+ggplot(posteriorRTanagram) +
+  theme_classic() +
+  geom_density(aes(prior_b_HC_useJa), fill="red", alpha=0.3) +
+  geom_density(aes(b_HC_useJa), fill="blue", alpha=0.5)
+
+ggplot(posteriorRTanagram) +
+  theme_classic() +
+  geom_density(aes(prior_b_EducationKort), fill="red", alpha=0.3) +
+  geom_density(aes(b_EducationKort), fill="blue", alpha=0.5)
+
+ggplot(posteriorRTanagram) +
+  theme_classic() +
+  geom_density(aes(prior_b_Menstrual_phaselutealphase), fill="red", alpha=0.3) +
+  geom_density(aes(b_Menstrual_phaselutealphase), fill="blue", alpha=0.5)
+
+ggplot(posteriorRTanagram) +
+  theme_classic() +
+  geom_density(aes(prior_sigma), fill="red", alpha=0.3) +
+  geom_density(aes(sigma), fill="blue", alpha=0.5)
+```
+```{r}
+RT_anagram_informed_prior <- c(
+  prior(normal(2.95, 1), class = Intercept),
+  prior(normal(-0.54, 1), class = b, coef = HC_useJa),
+  prior(normal(0, .5), class = b, coef = EducationGymnasieluddannelse),
+  prior(normal(0, .5), class = b, coef = EducationKort),
+  prior(normal(0, .5), class = b, coef = EducationLang),
+  prior(normal(0, .5), class = b, coef = EducationMellemlang),
+  prior(normal(0, .5), class = b, coef = Menstrual_phasehormonalgroup),
+  prior(normal(0, .5), class = b, coef = Menstrual_phaselutealphase),
+  prior(normal(0, .5), class = b, coef = Menstrual_phaseovulation),
+  prior(normal(1, .5), class = sd),
+  prior(normal(1, .5), class = sigma)) 
+
+#make the first model
+RT_anagram_informed_m0 <- brm(
+  RT_f0_anagram,
+  data = anagram,
+  family = lognormal,
+  prior = RT_anagram_informed_prior,
+  control = list(
+    max_treedepth = 20),
+  sample_prior = "only", #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 2, #run chains in parallel
+)
+
+pairs(RT_anagram_informed_m0)
+
+p0 <- pp_check(RT_anagram_informed_m0, nsamples = 100)
+p0 #pretty much impossible to infer anything from this plot
+
+#make the first model
+RT_anagram_informed_m1 <- brm(
+  RT_f0_anagram,
+  data = anagram,
+  family = lognormal,
+  prior = RT_anagram_informed_prior,
+  control = list(
+    max_treedepth = 20),
+  sample_prior = T, #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 2, #run chains in parallel
+)
+
+p1 <- pp_check(RT_anagram_informed_m1, nsamples = 100)
+p1 #pretty much impossible to infer anything from this plot
+
+posteriorRTanagram <-  posterior_samples(RT_anagram_informed_m1)
+
+#plotting the hormonalspiral and p-piller posteriors
+ggplot(posteriorRTanagram) +
+  theme_classic() +
+  geom_density(aes(prior_b_HC_useJa), fill="red", alpha=0.3) +
+  geom_density(aes(b_HC_useJa), fill="blue", alpha=0.5)
+```
+```
+
