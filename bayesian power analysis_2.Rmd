@@ -1,0 +1,368 @@
+---
+title: "testing bayesian power"
+author: "Maria"
+date: "16/5/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(tidyverse)
+library(brms)
+```
+
+
+Using this guide: https://solomonkurz.netlify.app/post/bayesian-power-analysis-part-i/
+get started with the data
+
+```{r}
+# set our theme 
+theme_set(theme_grey() +
+            theme(panel.grid = element_blank()))
+
+# define the means from RT anagrams (Bradshaw)
+mu_c <- 0 #control HC use nej
+mu_t <- -0.48 #"treatment" HC use ja
+
+# set up the data
+tibble(x = seq(from = -4, to = 4, by = .01)) %>%
+  mutate(c = dnorm(x, mean = mu_c, sd = 1),
+         t = dnorm(x, mean = mu_t, sd = 1)) %>%
+
+  # plot
+  ggplot(aes(x = x)) +
+  geom_area(aes(y = c),
+            size = 0, alpha = 1/3, fill = "grey25") +
+  geom_area(aes(y = t),
+            size = 0, alpha = 1/3, fill = "blue2") +
+ annotate(geom = "text",
+           x = c(-1.5, 1), y = .365,
+           label = c("HC users", "naturally cycling"),
+           hjust = 1:0,
+           size = 4) +
+  scale_x_continuous(NULL, breaks = -4:5) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  scale_color_manual(values = c("grey25", "blue2"))
+```
+
+
+simple example
+
+```{r}
+n <- 29 #to set number in each group
+m <- 37
+
+set.seed(1)
+
+#simulate data how we expect it to look
+d <-
+  tibble(group = rep(c("control", "treatment"), c(29, 37))) %>% 
+  mutate(treatment = ifelse(group == "control", 0, 1),
+         y         = ifelse(group == "control", 
+                            rnorm(n, mean = mu_c, sd = 1),
+                            rnorm(m, mean = mu_t, sd = 1))) #consider this
+
+#get prior
+get_prior(data = d,
+          family = gaussian,
+          y ~ 0 + Intercept + treatment)
+
+#fit model
+fit <-
+  brm(data = d,
+      family = gaussian,
+      y ~ 0 + Intercept + treatment,
+      prior = c(prior(normal(0, 2), class = b), #somewhat vague prior
+                prior(normal(2, 1), class = sigma)), #sigma
+      seed = 1)
+
+plot(fit) #everything looks good
+
+fixef(fit) #does it cross 0?
+
+```
+
+
+Make function for simulating data
+
+```{r}
+sim_d <- function(seed, n, m) {
+  
+  mu_t <- -0.48 #"treatment" HC use ja
+  mu_c <- 0 #control HC use nej
+
+  set.seed(seed)
+  
+  tibble(group = rep(c("control", "treatment"), c(29, 37))) %>% 
+  mutate(treatment = ifelse(group == "control", 0, 1),
+         y         = ifelse(group == "control", 
+                            rnorm(n, mean = mu_c, sd = 1),
+                            rnorm(m, mean = mu_t, sd = 1)))
+}
+```
+
+```{r}
+# how many simulations 
+n_sim <- 100
+
+# this will help us track time
+t1 <- Sys.time()
+
+# make tible from the simulations
+s <-
+  tibble(seed = 1:n_sim) %>% 
+  mutate(d = map(seed, sim_d, n = 29, m = 37)) %>% 
+  mutate(fit = map2(d, seed, ~update(fit, newdata = .x, seed = .y)))
+
+t2 <- Sys.time()
+
+
+#see results
+head(s)
+
+parameters <-
+  s %>% 
+  mutate(treatment = map(fit, ~ fixef(.) %>% 
+                           data.frame() %>% 
+                           rownames_to_column("parameter"))) %>% 
+  unnest(treatment)
+
+parameters %>% 
+  select(-d, -fit) %>% 
+  filter(parameter == "treatment") %>% 
+  head()
+
+#visualize all 100 beta summaries
+parameters %>% 
+  filter(parameter == "treatment") %>% 
+  
+  ggplot(aes(x = seed, y = Estimate, ymin = Q2.5, ymax = Q97.5)) +
+  geom_hline(yintercept = c(0, .5), color = "white") +
+  geom_pointrange(fatten = 1/2) +
+  labs(x = "seed (i.e., simulation index)",
+       y = expression(beta[1])) +
+  ggtitle("Credibility intervals for 100 simulations")+
+  annotate(geom = "text",
+           x = 26.1, y = -1.5,
+           label = "HC users (n = 29)",
+           size = 3)+
+  annotate(geom = "text",
+           x = 29, y = -1.6,
+           label = "naturally cycling (n = 37)",
+           size = 3)
+
+#quantify it
+parameters %>% 
+  filter(parameter == "treatment") %>% 
+  mutate(check = ifelse(Q97.5 < 0, 1, 0)) %>% 
+  summarise(power = mean(check))
+
+#only 45 of our 100 simulations produced a 95% Bayesian credibility interval that did not straddle 0
+
+
+
+```
+
+Try to fit it with more people in each condition
+
+```{r}
+n= 70
+
+#simulate data with 66 in each condition
+d2 <-
+  tibble(group = rep(c("control", "treatment"), c(70, 70))) %>% 
+  mutate(treatment = ifelse(group == "control", 0, 1),
+         y         = ifelse(group == "control", 
+                            rnorm(n, mean = mu_c, sd = 1),
+                            rnorm(n, mean = mu_t, sd = 1))) #consider this
+
+#fit model
+fit <-
+  brm(data = d2,
+      family = gaussian,
+      y ~ 0 + Intercept + treatment,
+      prior = c(prior(normal(0, 2), class = b), #somewhat vague prior
+                prior(normal(2, 1), class = sigma)), #sigma
+      seed = 1)
+
+#new function
+sim_d2  <- function(seed, n) {
+  
+  mu_t <- -0.48 #"treatment" HC use ja
+  mu_c <- 0 #control HC use nej
+
+  set.seed(seed)
+  
+  tibble(group = rep(c("control", "treatment"), each = n)) %>% 
+  mutate(treatment = ifelse(group == "control", 0, 1),
+         y         = ifelse(group == "control", 
+                            rnorm(n, mean = mu_c, sd = 1),
+                            rnorm(n, mean = mu_t, sd = 1)))
+}
+
+# how many simulations 
+n_sim <- 100
+
+# this will help us track time
+t3 <- Sys.time()
+
+# make tible from the simulations
+s2 <-
+  tibble(seed = 1:n_sim) %>% 
+  mutate(d2 = map(seed, sim_d2, n = 70)) %>% 
+  mutate(fit = map2(d2, seed, ~update(fit, newdata = .x, seed = .y)))
+
+t4 <- Sys.time()
+
+
+#see results
+head(s2)
+
+parameters2 <-
+  s2 %>% 
+  mutate(treatment = map(fit, ~ fixef(.) %>% 
+                           data.frame() %>% 
+                           rownames_to_column("parameter"))) %>% 
+  unnest(treatment)
+
+parameters2 %>% 
+  select(-d2, -fit) %>% 
+  filter(parameter == "treatment") %>% 
+  head()
+
+#visualize all 100 beta summaries
+parameters2 %>% 
+  filter(parameter == "treatment") %>% 
+  
+  ggplot(aes(x = seed, y = Estimate, ymin = Q2.5, ymax = Q97.5)) +
+  geom_hline(yintercept = c(0, .5), color = "white") +
+  geom_pointrange(fatten = 1/2) +
+  labs(x = "seed (i.e., simulation index)",
+       y = expression(beta[1])) +
+  ggtitle("Credibility intervals for 100 simulations")+
+  annotate(geom = "text",
+           x = 26.1, y = -1.3,
+           label = "HC users (n = 70)",
+           size = 3)+
+  annotate(geom = "text",
+           x = 29, y = -1.4,
+           label = "naturally cycling (n = 70)",
+           size = 3)
+
+#quantify it
+parameters2 %>% 
+  filter(parameter == "treatment") %>% 
+  mutate(check = ifelse(Q97.5 < 0, 1, 0)) %>% 
+  summarise(power = mean(check))
+
+#79 of our 100 simulations produced a 95% Bayesian credibility interval that did not straddle 0
+
+```
+
+
+Fit with logic puzzles (previous ones will be overwritten)
+
+```{r}
+
+mu_c <- 0 #control HC use nej
+mu_t <- -0.35 #"treatment" HC use ja
+
+n=120
+m=120
+
+#simulate data how we expect it to look
+d <-
+  tibble(group = rep(c("control", "treatment"), c(120, 120))) %>% 
+  mutate(treatment = ifelse(group == "control", 0, 1),
+         y         = ifelse(group == "control", 
+                            rnorm(n, mean = mu_c, sd = 1),
+                            rnorm(m, mean = mu_t, sd = 1))) #consider this
+
+#fit model
+fit <-
+  brm(data = d,
+      family = gaussian,
+      y ~ 0 + Intercept + treatment,
+      prior = c(prior(normal(0, 2), class = b), #somewhat vague prior
+                prior(normal(2, 1), class = sigma)), #sigma
+      seed = 1)
+
+#function with correct values for logic
+sim_d <- function(seed, n, m) {
+  
+  mu_t <- -0.35 #"treatment" HC use ja
+  mu_c <- 0 #control HC use nej
+
+  set.seed(seed)
+  
+  tibble(group = rep(c("control", "treatment"), c(120, 120))) %>% 
+  mutate(treatment = ifelse(group == "control", 0, 1),
+         y         = ifelse(group == "control", 
+                            rnorm(n, mean = mu_c, sd = 1),
+                            rnorm(m, mean = mu_t, sd = 1)))
+}
+
+# how many simulations 
+n_sim <- 100
+
+# this will help us track time
+t1 <- Sys.time()
+
+# make tible from the simulations
+s <-
+  tibble(seed = 1:n_sim) %>% 
+  mutate(d = map(seed, sim_d, n = 120, m = 120)) %>% 
+  mutate(fit = map2(d, seed, ~update(fit, newdata = .x, seed = .y)))
+
+t2 <- Sys.time()
+
+
+#see results
+head(s)
+
+parameters <-
+  s %>% 
+  mutate(treatment = map(fit, ~ fixef(.) %>% 
+                           data.frame() %>% 
+                           rownames_to_column("parameter"))) %>% 
+  unnest(treatment)
+
+parameters %>% 
+  select(-d, -fit) %>% 
+  filter(parameter == "treatment") %>% 
+  head()
+
+#visualize all 100 beta summaries
+parameters %>% 
+  filter(parameter == "treatment") %>% 
+  
+  ggplot(aes(x = seed, y = Estimate, ymin = Q2.5, ymax = Q97.5)) +
+  geom_hline(yintercept = c(0, .5), color = "white") +
+  geom_pointrange(fatten = 1/2) +
+  labs(x = "seed (i.e., simulation index)",
+       y = expression(beta[1])) +
+  ggtitle("Credibility intervals for 100 simulations")+
+  annotate(geom = "text",
+           x = 26.1, y = -1.5,
+           label = "HC users (n = 120)",
+           size = 3)+
+  annotate(geom = "text",
+           x = 29, y = -1.6,
+           label = "naturally cycling (n = 120)",
+           size = 3)
+
+#quantify it
+parameters %>% 
+  filter(parameter == "treatment") %>% 
+  mutate(check = ifelse(Q97.5 < 0, 1, 0)) %>% 
+  summarise(power = mean(check))
+
+#only 45 of our 100 simulations produced a 95% Bayesian credibility interval that did not straddle 0
+
+```
+
