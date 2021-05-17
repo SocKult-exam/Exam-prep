@@ -1,0 +1,923 @@
+---
+title: "soccult exam prep"
+author: "Maria"
+date: "10/4/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+#load packages
+pacman::p_load(tidyverse, stringr, readr, rethinking, brms, patchwork, metafor, bayesplot,
+  viridis)
+```
+
+
+Data cleaning and merging
+
+```{r}
+
+#read experimental data
+pavlovia <- list.files(pattern = "*.csv") %>% map_df(~read_csv(.))
+
+#separate participants with the same randomly generated ID (1142)
+id1142 <- pavlovia %>% 
+  filter(id == "1142") %>% 
+  filter(date == "2021-05-05_14h41.33.495") %>% 
+  mutate(id = ifelse(id == 1142, 12345, NA)) #give new id
+
+id1142_v2 <- pavlovia %>% 
+  filter(id == "1142") %>% 
+  filter(date == "2021-04-30_19h52.39.201") %>% 
+  mutate(id = ifelse(id == 1142, 54321, NA)) #give new id
+
+
+#filter out 1142 from main dataframe
+pavlovia2 <- pavlovia %>% 
+  filter(id != "1142")
+
+#rowbind the data to add the participants again
+pavlovia3 <- rbind(pavlovia2, id1142)
+pavlovia4 <- rbind(pavlovia3, id1142_v2)
+
+
+#read survey data
+#qual <- read_csv("spørgeskema.csv")  
+qual <- read.csv("spørgeskema.csv", fileEncoding = "UTF-8", na.strings = c("", "NA")) %>% 
+  subset(EndDate != "2021-04-22 10:54:05") #remove Helle who tested the survey for us
+
+
+#again separate participants with the same randomly generated ID (1142)
+id1142_qual <- qual %>% 
+  filter(id == "1142") %>% 
+  filter(ResponseId == "R_vvECwnKwMxcSk0N") %>% 
+  mutate(id = ifelse(id == 1142, 54321, NA)) #give new id
+
+id1142_v2_qual <- qual %>% 
+  filter(id == "1142") %>% 
+  filter(ResponseId == "R_1QJDZuyniqXqIlj") %>% 
+  mutate(id = ifelse(id == 1142, 12345, NA)) #give new id
+
+#filter out 1142 from survey dataframe
+qual <- qual %>% 
+  filter(id != "1142")
+
+#rowbind the data to add the participants again
+qual1 <- rbind(qual, id1142_qual)
+rigtigqual <- rbind(qual1, id1142_v2_qual)
+
+
+#merge pavlovia and survey
+merged <- merge(pavlovia4, rigtigqual) %>% #merge
+  filter(date != "2021-04-29_20h26.22.483") #remove rows with this time stamp
+
+#write csv
+#write.csv(merged, "cleaned.csv")
+
+
+```
+
+Now clean the merged dataframe
+
+```{r}
+
+#read full dataframe
+clean <- read_csv("clean.csv") %>% 
+  filter(anagrammer != "REMOVE" | is.na(anagrammer)) #remove 
+
+#remove participants based on exclusion criteria 
+clean <- subset(clean, !is.na(clean$RT)) %>% #remove missing reaction times
+  subset(Att_disease != "Ja") %>% #remove attentional disorders
+  subset(Pregnant != "Ja") %>% #remove recent pregnancy 
+  subset(Hormonal_disease != "Ja") #remove hormonal diseases
+
+#remove participants having been off HC for less than a year
+clean <- clean %>% 
+  mutate(More_than_a_year_on_HC = str_extract(clean$Time_since_use, "Mindre")) %>% #make a column for people having been off HC for less than a year
+  subset(More_than_a_year_on_HC != "Mindre" | is.na(More_than_a_year_on_HC)) #include only people not coded in above column 
+
+#choose the correct columns to include
+clean <- subset(clean, select = c(id, anagram_answer, RT, anagrammer, correct, IQ_response.keys, IQ_response.corr, options, correctIQanswer, Gender, Age, HC_use, HC_ever, HC_time, Time_since_use, Previous_HC_Time, HC_type, HC_type_8_TEXT, Brand, Generation, Pregnant, Hormonal_disease, Days_since_last_mens, Length_of_cycle, Prediction_ability_1, Att_disease, Dyslexic, Education, IQ_abilities_1, IQ_abilities_2, IQ_abilities_3 ))
+
+  
+```
+
+Make accuracy column that captures both accuracy in word scrambles and IQ puzzles
+
+```{r}
+#play around with accuracy column
+
+clean <- clean %>% 
+  mutate(anagram_answer = ifelse(is.na(anagram_answer), "wrong", anagram_answer)) %>% #NAs count as wrong answers
+  mutate(anagram_accuracy = ifelse(anagram_answer == correct, 1, 0)) %>% #1 for correct solutions, 0 for incorrect 
+  mutate(anagram_accuracy = ifelse(anagram_answer == "bogrod", 1, anagram_accuracy)) %>% #accept this is correct
+  mutate(anagram_accuracy = ifelse(anagram_answer == "bog rod", 1, anagram_accuracy)) %>% #accept this is correct
+  mutate(anagram_accuracy = ifelse(anagram_answer == "apelsin", 1, anagram_accuracy)) %>% #accept this is correct
+  mutate(overall_accuracy = anagram_accuracy) %>% #copy the anagram accuracy to the overall accuracy
+  mutate(overall_accuracy = ifelse(is.na(overall_accuracy), IQ_response.corr, anagram_accuracy)) %>% #add the IQ accuracy where we have missing info 
+  mutate(overall_accuracy = ifelse(is.na(overall_accuracy), 0, overall_accuracy))
+
+
+
+```
+
+Code the different phases in menstrual cycle
+
+```{r}
+#play around with phase in menstrual cycle
+
+#fix class
+clean <- clean %>% 
+  mutate(Days_since_last_mens = as.numeric(Days_since_last_mens)) %>% #numeric
+  mutate(Length_of_cycle = as.numeric(Length_of_cycle)) #numeric
+         
+#calculate percentage and menstrual phases (rough estimate)
+clean <- clean %>% 
+  mutate(Percentage_cycle = (Days_since_last_mens/Length_of_cycle)*100) %>% #how far along in menstrual cycle
+  #(Menstrual_phase = ifelse(Percentage_cycle == 0, "menstruation", NA)) %>% #on their period
+  mutate(Menstrual_phase = ifelse(Percentage_cycle >= 0 & Percentage_cycle <= 45, "follicular phase", NA)) %>%  #follicular phase
+  mutate(Menstrual_phase = ifelse(Percentage_cycle > 45 & Percentage_cycle <= 55, "ovulation", Menstrual_phase)) %>%  #ovulation 
+  mutate(Menstrual_phase = ifelse(Percentage_cycle > 55, "luteal phase", Menstrual_phase)) %>%  #luteal phase
+  mutate(Menstrual_phase = ifelse(is.na(Menstrual_phase), "hormonal group", Menstrual_phase)) #add the hormonal group to avoid NAs
+
+# based on the following resources:
+
+# https://helloclue.com/articles/cycle-a-z/the-menstrual-cycle-more-than-just-the-period ovulation occurs midway through period
+# https://www.nhs.uk/common-health-questions/womens-health/how-can-i-tell-when-i-am-ovulating/ ovulation occurs 10-16 days before period
+
+```
+
+Last bit of cleaning
+
+```{r}
+#correcting spelling mistakes etc in the brand column
+clean$Brand[clean$Brand == "2. Microstad/Femicept"] <- "Femicept"
+clean$Brand[clean$Brand == "2. generations p-piller, Femicept"] <- "Femicept"
+clean$Brand[clean$Brand == "femicept"] <- "Femicept"
+clean$Brand[clean$Brand == "Jeg er virkelig ked af det, men jeg kan simpelthen ikke huske det"] <- NA
+clean$Brand[clean$Brand == "var ikke et bestemt mærke, fik det billigste og derfor ikke samme mærke hver gang."] <- "No idea" #virker ikke
+clean$Brand[clean$Brand == "Anastella"] <- "Anastrella"
+clean$Brand[clean$Brand == "Anasrella"] <- "Anastrella"
+
+
+#add non-HC users to HC columns
+clean <- clean %>% 
+  mutate(HC_type = ifelse(is.na(HC_type), "not on HC", HC_type)) %>% 
+  mutate(Brand = ifelse(is.na(Brand), "not on HC", Brand)) %>% 
+  mutate(Generation = ifelse(is.na(Generation), "not on HC", Generation)) %>% 
+  mutate(HC_time = ifelse(is.na(HC_time), "not on HC", HC_time)) %>% 
+  mutate(Prediction_ability_1 = ifelse(is.na(Prediction_ability_1 ), "hormonal group", Prediction_ability_1))
+
+
+#make average IQ ability column
+clean <- clean %>% 
+  mutate(IQ_abilities_3 = ifelse(is.na(IQ_abilities_3), 50, IQ_abilities_3)) %>% #we infer average abilities for missing values
+  mutate(AVG_IQ_Ability = (IQ_abilities_1+IQ_abilities_2+IQ_abilities_3)/3) #average 
+
+#round to fewer decimal points
+clean <- clean %>% 
+  mutate(RT = round(RT, digits = 5)) %>% 
+  mutate(AVG_IQ_Ability = round(AVG_IQ_Ability, digits = 2))
+
+#write csv
+write_csv(clean, "final_data_sockult.csv")
+```
+
+Now to Bayesian workflow
+
+```{r}
+
+
+#load dataframe and do the very last bit of cleaning
+df <- read_csv("final_data_sockult.csv") %>% 
+  subset(RT >= 1) %>% #exclude unrealistic response times
+  mutate(RT = ifelse(RT >= 600, 600, RT)) %>% #define an upper limit of 10 minutes 
+  subset(id != 1741) %>% #remove person with wrong info
+  mutate(Generation = ifelse(HC_type == "Hormonspiral", "Hormonspiral", Generation)) %>% #add different HC groups to generation column
+  mutate(Generation = ifelse(HC_type == "Mini-piller", "Mini-piller", Generation)) %>% #same as above
+  mutate(Generation = ifelse(HC_type == "Hvis andet, hvad:", "Nødprævention", Generation)) %>% #same as above
+  mutate(Brand = ifelse(HC_type == "Hormonspiral", "Hormonspiral", Brand)) %>% #add different HC groups to brand column
+  mutate(Brand = ifelse(HC_type == "Mini-piller", "Mini-piller", Brand)) %>% #same as above
+  mutate(Brand = ifelse(HC_type == "Hvis andet, hvad:", "Nødprævention", Brand)) %>%  #same as above
+  mutate(HC_use = as.factor(HC_use)) %>% #make into factor
+  mutate(HC_type = as.factor(HC_type)) %>% #make into factor
+  mutate(Task = ifelse(is.na(anagram_accuracy), "IQ", "anagram")) %>% #make task column
+  mutate(Task = as.factor(Task))  #make into factor
+  
+
+
+#shorten education names
+df <- df %>% 
+  mutate(Education = ifelse(Education == "Kort videregående uddannelse (fx. erhvervsuddannelse på 2 år inkl praktik)", "Kort", Education)) %>% 
+  mutate(Education = ifelse(Education == "Mellemlang videregående uddannelse (fx. bachelor)", "Mellemlang", Education)) %>% 
+  mutate(Education = ifelse(Education == "Lang videregående uddannelse (fx. kandidat el. PhD)", "Lang", Education)) %>% 
+  mutate(Education = as.factor(Education))
+
+#fix education levels
+df$Education <- factor(df$Education, levels = c("Folkeskole", "Gymnasiel uddannelse", "Kort", "Mellemlang", "Lang"))
+
+#fix HC levels
+df$HC_use <- factor(df$HC_use, levels = c("Nej", "Ja"))
+
+levels(df$HC_use)
+
+
+#subset tasks
+anagram <- df %>% 
+  filter(Task == "anagram")
+
+IQ <- df %>% 
+  filter(Task == "IQ")
+
+```
+
+Check density distributions
+
+```{r}
+#density distributions for time and accuracy 
+dens(anagram$RT) #log-normal
+dens(IQ$RT) #log-normal
+dens(anagram$overall_accuracy) #binomial 
+dens(IQ$overall_accuracy) #binomial 
+
+```
+
+Model differences between types of HC
+
+```{r}
+#subset only people on HC
+HC_diff <- df %>% 
+  subset(HC_use == "Ja") %>% 
+  mutate(HC_type = as.character(HC_type)) %>% 
+  subset(HC_type != "Hvis andet, hvad:") %>% 
+  mutate(HC_type = ifelse(HC_type == "Hormonspiral", "IUD", HC_type)) %>% 
+  mutate(HC_type = ifelse(HC_type == "P-piller", "Combined birth control pill", HC_type)) %>% 
+  mutate(HC_type = ifelse(HC_type == "Mini-piller", "Mini-pills", HC_type)) %>% 
+  mutate(HC_type = as.factor(HC_type)) #make into factor 
+
+#formula 
+HC_diff_f <- bf(RT ~ 0 + HC_type + (1|id))
+
+#get prior
+get_prior(
+  HC_diff_f,
+  HC_diff,
+  family = lognormal
+) #beta, sigma, sd
+
+#set priors 
+HC_diff_prior <- c(
+  prior(normal(3.23, 1.2), class = b), #mean of log RT 
+  prior(normal(1.2, 0.6), class = sigma), #SD of log RT
+  prior(normal(1.2, 0.6), class = sd) #
+)
+
+#run the model on priors only 
+HC_diff_m0 <- brm(
+  HC_diff_f,
+  HC_diff,
+  family = lognormal,
+  prior = HC_diff_prior,
+  sample_prior = "only",
+  chains = 2,
+  cores = 4,
+  file = "HC_diff_m0"
+)
+
+#pp check
+pp_check(HC_diff_m0, nsamples = 100) #looks good
+plot(conditional_effects(HC_diff_m0), points = T)
+
+
+#run the model on all the data 
+HC_diff_m1 <- brm(
+  HC_diff_f,
+  HC_diff,
+  family = lognormal,
+  prior = HC_diff_prior,
+  sample_prior = T,
+  chains = 2,
+  cores = 4#,
+  #file = "HC_diff_m1"
+)
+
+#pp check
+pp_check(HC_diff_m1, nsamples = 100) #looks good
+plot(conditional_effects(HC_diff_m1), points = T)
+
+#run summary 
+summary(HC_diff_m1)
+
+#plot posterior learning against prior
+#make posterior 
+posterior <-  posterior_samples(HC_diff_m1)
+
+#plotting the intercept for each HC type
+IUD <- ggplot(posterior) +
+  theme_classic() +
+  geom_density(aes(prior_b), fill = "red", alpha = 0.3) +
+  geom_density(aes(b_HC_typeHormonspiral), fill = "blue", alpha = 0.5) +#hormonspiral, looks good
+  ggtitle("IUD")
+
+Mini <- ggplot(posterior) +
+  theme_classic() +
+  geom_density(aes(prior_b), fill = "red", alpha = 0.3) +
+  geom_density(aes(b_HC_typeMiniMpiller), fill = "blue", alpha = 0.5)+ #minipiller, looks good
+  ggtitle("Mini-pills")
+  
+Comb <- ggplot(posterior) +
+  theme_classic() +
+  geom_density(aes(prior_b), fill = "red", alpha = 0.3) +
+  geom_density(aes(b_HC_typePMpiller), fill = "blue", alpha = 0.5)+ #p-piller, looks good 
+  ggtitle("Combined birth-control")
+
+IUD+Mini+Comb
+
+# ggplot(posterior) +
+#   theme_classic() +
+#   geom_density(aes(prior_b), fill = "red", alpha = 0.3) +
+#   geom_density(aes(b_HC_typeHvisandethvad:), fill="blue", alpha = 0.5) #nødprævention  
+
+# problems due to the : in referring to the beta
+
+#box plot
+HC_diff_results <- ggplot(HC_diff, aes(x=HC_type, y=RT, fill=HC_type)) +
+  geom_boxplot() +
+  labs(y="Response time", x = "HC type") +
+  labs(fill = "HC type") +
+  # scale_fill_discrete(name = "HC use", labels = c("Naturally cycling", "HC user")) +
+  # scale_x_discrete(breaks=c("Nej","Ja"),
+  #       labels=c("Natural", "HC users"))  +
+  scale_color_grey() + theme_classic() +
+  ggtitle("Boxplot: Response time for different HC type")
+
+HC_diff_results
+
+
+
+```
+
+Model differences between menstrual phases
+
+```{r}
+#subset only people not on HC
+phase_diff <- df #%>% 
+  #subset(HC_use == "Nej") %>% 
+  #mutate(Menstrual_phase = as.factor(Menstrual_phase)) #make into factor 
+
+
+#formula 
+phase_diff_f <- bf(RT ~ 0 + Menstrual_phase + (1|id))
+
+#get prior
+get_prior(
+  phase_diff_f,
+  phase_diff,
+  family = lognormal
+) #beta, sigma, sd
+
+#set priors 
+mens_diff_prior <- c(
+  prior(normal(3.21, 1.2), class = b), #mean of log RT 
+  prior(normal(1.2, 0.6), class = sigma), #SD of log RT
+  prior(normal(1.2, 0.6), class = sd) #
+)
+
+#run the model on priors only 
+mens_diff_m0 <- brm(
+  phase_diff_f,
+  phase_diff,
+  family = lognormal,
+  prior = mens_diff_prior,
+  sample_prior = "only",
+  chains = 2,
+  cores = 4#,
+  #file = "mens_diff_m0"
+)
+
+#pp check
+pp_check(mens_diff_m0, nsamples = 100) #looks good
+plot(conditional_effects(mens_diff_m0), points = T)
+
+
+#run the model on all the data 
+mens_diff_m1 <- brm(
+  phase_diff_f,
+  phase_diff,
+  family = lognormal,
+  prior = mens_diff_prior,
+  sample_prior = T,
+  chains = 2,
+  cores = 4,
+  file = "mens_diff_m1"
+)
+
+#pp check
+pp_check(mens_diff_m1, nsamples = 100) #looks good
+plot(conditional_effects(mens_diff_m1), points = T)
+
+#run summary 
+summary(mens_diff_m1)
+
+#box plot
+phase_diff_results <- ggplot(phase_diff, aes(x=Menstrual_phase, y=RT, fill= Menstrual_phase)) +
+  geom_boxplot() +
+  labs(y="Response time", x = "Menstrual phase") +
+  labs(fill = "Menstrual phase") +
+  # scale_fill_discrete(name = "HC use", labels = c("Naturally cycling", "HC user")) +
+  # scale_x_discrete(breaks=c("Nej","Ja"),
+  #       labels=c("Natural", "HC users"))  +
+  scale_color_grey() + theme_classic() +
+  ggtitle("Boxplot: Response time for different menstrual phases")
+
+phase_diff_results
+
+```
+
+
+RT model anagram
+
+```{r}
+#formula RT model
+RT_f0_anagram <- bf(RT ~ 1 + HC_use + Education + (1| Menstrual_phase) + (1|Menstrual_phase:id) )
+
+
+#get prior
+get_prior(
+  RT_f0_anagram,
+  anagram,
+  family = lognormal
+) #beta, sigma, sd
+
+
+dens(log(anagram$RT))
+mean(log(anagram$RT)) #2.95
+sd(log(anagram$RT)) #1.3
+
+#figuring out the informed prior
+Sd1log = log(44.14 + 41.24) - log(44.14) #Sd1log = log(mean + sd) - log(mean) 
+Sd2log = log(76.11 + 84.95) - log(76.11) 
+
+sqrt(Sd1log ^2 + Sd2log ^2)
+
+log(44.14) - log(76.11) #log(mean) - log(mean) mean parameter of -0.544
+#set priors 
+RT_anagram_conservative_prior <- c(
+  prior(normal(2.95, 1), class = Intercept),
+  prior(normal(-0.54, 0.5), class = b, coef = HC_useJa),
+  prior(normal(0, .5), class = b, coef = EducationGymnasieluddannelse),
+  prior(normal(0, .5), class = b, coef = EducationKort),
+  prior(normal(0, .5), class = b, coef = EducationLang),
+  prior(normal(0, .5), class = b, coef = EducationMellemlang),
+  prior(normal(1, .5), class = sd),
+  prior(normal(1, .5), class = sigma))
+
+
+#make the first model
+RT_anagram_conservative_m0 <- brm(
+  RT_f0_anagram,
+  data = anagram,
+  family = lognormal,
+  prior = RT_anagram_conservative_prior,
+  # control = list(
+  #   max_treedepth = 20),
+  sample_prior = "only", #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 4, #run chains in parallel
+  file = "RT_anagram_conservative_m0"
+)
+
+#pairs
+pairs(RT_anagram_conservative_m0)
+
+#pp check
+pp_RT_anagram_conservative_prior <- pp_check(RT_anagram_conservative_m0 , nsamples = 100) #looks good
+pp_RT_anagram_conservative_prior
+
+#run model on all the data
+RT_anagram_conservative_m1 <- brm(
+  RT_f0_anagram,
+  data = anagram,
+  family = lognormal,
+  prior = RT_anagram_conservative_prior,
+  # control = list(
+  #   max_treedepth = 20),
+  sample_prior = T, #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 4, #run chains in parallel
+  file = "RT_anagram_conservative_m1"
+)
+
+#pp check
+pp_RT_anagram_conservative_prior <- pp_check(RT_anagram_conservative_m1 , nsamples = 100) #looks good
+pp_RT_anagram_conservative_prior
+
+
+
+```
+Non-conservative version of RT using informed priors
+
+```{r}
+
+#set priors 
+RT_anagram_informed_prior <- c(
+  prior(normal(2.95, 1), class = Intercept),
+  prior(normal(-0.54, 1), class = b, coef = HC_useJa),
+  prior(normal(0, .5), class = b, coef = EducationGymnasieluddannelse),
+  prior(normal(0, .5), class = b, coef = EducationKort),
+  prior(normal(0, .5), class = b, coef = EducationLang),
+  prior(normal(0, .5), class = b, coef = EducationMellemlang),
+  prior(normal(1, .5), class = sd),
+  prior(normal(1, .5), class = sigma))
+
+
+#make the first model
+RT_anagram_informed_m0 <- brm(
+  RT_f0_anagram,
+  data = anagram,
+  family = lognormal,
+  prior = RT_anagram_informed_prior,
+  # control = list(
+  #   max_treedepth = 20),
+  sample_prior = "only", #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 2, #run chains in parallel
+  file = "RT_anagram_informed_m0"
+)
+
+#pp check
+pp_RT_anagram_informed_prior <- pp_check(RT_anagram_informed_m0 , nsamples = 100) #looks good
+pp_RT_anagram_informed_prior
+
+
+#look at all the data
+#make the first model
+RT_anagram_informed_m1 <- brm(
+  RT_f0_anagram,
+  data = anagram,
+  family = lognormal,
+  prior = RT_anagram_informed_prior,
+  control = list(
+    max_treedepth = 10,
+    adapt_delta = 0.99),
+  sample_prior = T, #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 2, #run chains in parallel
+  file = "RT_anagram_informed_m1"
+)
+
+#pp check
+pp_RT_anagram_informed_prior <- pp_check(RT_anagram_informed_m0 , nsamples = 100) #looks good
+pp_RT_anagram_informed_prior
+
+summary(RT_anagram_informed_m1)
+
+```
+
+
+IQ model RT
+```{r}
+#formula RT model
+RT_f0_IQ <- bf(RT ~ 1 + HC_use + Education + (1| Menstrual_phase) + (1|Menstrual_phase:id))
+
+
+#get prior
+get_prior(
+  RT_f0_IQ,
+  IQ,
+  family = lognormal
+) #beta, sigma, sd
+
+
+dens(log(anagram$RT))
+mean(log(anagram$RT)) #2.95
+sd(log(anagram$RT)) #1.3
+
+#figuring out the informed prior
+Sd1log = log(97.16 + 34.92) - log(97.16) #non HC Sd1log = log(mean + sd) - log(mean)
+Sd2log = log(78.53 + 28.50) - log(78.53) #HC users 
+
+sqrt(Sd1log^2 + Sd2log^2) #0.44
+
+log(97.16) - log(78.53) #log(mean) - log(mean) mean parameter of 0.21
+
+mean(log(IQ$RT)) #3.61
+sd(log(IQ$RT)) #0.87
+
+#set priors 
+RT_IQ_informed_prior <- c(
+  prior(normal(3.61, 0.87), class = Intercept),
+  prior(normal(0.21, 0.44), class = b, coef = HC_useJa),
+  prior(normal(0, .5), class = b, coef = EducationGymnasieluddannelse),
+  prior(normal(0, .5), class = b, coef = EducationKort),
+  prior(normal(0, .5), class = b, coef = EducationLang),
+  prior(normal(0, .5), class = b, coef = EducationMellemlang),
+  prior(normal(1, .5), class = sd),
+  prior(normal(1, .5), class = sigma))
+
+
+#make the first model
+RT_IQ_informed_m0 <- brm(
+  RT_f0_IQ,
+  data = IQ,
+  family = lognormal,
+  prior = RT_IQ_informed_prior,
+  control = list(
+    max_treedepth = 10,
+    adapt_delta = 0.99),
+  sample_prior = "only", #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 4, #run chains in parallel
+  file = "RT_IQ_informed_m0"
+)
+
+
+#pp check
+pp_RT_IQ_informed_prior <- pp_check(RT_IQ_informed_m0 , nsamples = 100) #looks good
+pp_RT_IQ_informed_prior
+
+#run on all the data
+RT_IQ_informed_m1 <- brm(
+  RT_f0_IQ,
+  data = IQ,
+  family = lognormal,
+  prior = RT_IQ_informed_prior,
+  control = list(
+    max_treedepth = 10,
+    adapt_delta = 0.99),
+  sample_prior = T, #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 4, #run chains in parallel
+  file = "RT_IQ_informed_m1"
+)
+
+
+#pp check
+pp_RT_IQ_informed_prior_m1 <- pp_check(RT_IQ_informed_m1 , nsamples = 100) #looks good
+pp_RT_IQ_informed_prior_m1
+
+#plot
+posteriorRT_IQ_informed <-  posterior_samples(RT_IQ_informed_m1)
+
+#plotting the hormonalspiral and p-piller posteriors
+plotinformed <- ggplot(posteriorRT_IQ_informed) +
+  theme_classic() +
+  geom_density(aes(prior_b_HC_useJa), fill = "red", alpha = 0.3) +
+  geom_density(aes(b_HC_useJa), fill = "blue", alpha = 0.5)
+  
+plotinformed
+
+summary(RT_IQ_informed_m1)
+
+
+```
+
+Trying a less conservative prior 
+
+```{r}
+#set priors 
+RT_IQ_lesscons_prior <- c(
+  prior(normal(3.61, 0.87), class = Intercept),
+  prior(normal(0.21, 0.7), class = b, coef = HC_useJa),
+  prior(normal(0, .5), class = b, coef = EducationGymnasieluddannelse),
+  prior(normal(0, .5), class = b, coef = EducationKort),
+  prior(normal(0, .5), class = b, coef = EducationLang),
+  prior(normal(0, .5), class = b, coef = EducationMellemlang),
+  prior(normal(1, .5), class = sd),
+  prior(normal(1, .5), class = sigma))
+
+#make the first model
+RT_IQ_lesscons_m1 <- brm(
+  RT_f0_IQ,
+  data = IQ,
+  family = lognormal,
+  prior = RT_IQ_lesscons_prior,
+  control = list(
+    max_treedepth = 10,
+    adapt_delta = 0.99),
+  sample_prior = T, #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 4, #run chains in parallel
+  file = "RT_IQ_lesscons_m1"
+)
+
+#pp check
+pp_RT_IQ_lesscons_prior <- pp_check(RT_IQ_lesscons_m1 , nsamples = 100) #looks good
+pp_RT_IQ_lesscons_prior
+
+#plot
+posteriorRT_IQ_lesscons <-  posterior_samples(RT_IQ_lesscons_m1)
+
+#plotting the hormonalspiral and p-piller posteriors
+plotlesscons <- ggplot(posteriorRT_IQ_lesscons) +
+  theme_classic() +
+  geom_density(aes(prior_b_HC_useJa), fill="red", alpha=0.3) +
+  geom_density(aes(b_HC_useJa), fill="blue", alpha=0.5)
+  
+plotlesscons 
+
+summary(RT_IQ_informed_m1)
+
+```
+Accuracy model anagrams
+
+```{r}
+mean(anagram$overall_accuracy) #0.73
+sd(anagram$overall_accuracy) #0.44
+
+#formula accuracy anagram model
+AC_f0_anagram <- bf(overall_accuracy ~ 1 + HC_use + Education + (1| Menstrual_phase) + (1|Menstrual_phase:id))
+
+#get prior
+get_prior(
+  AC_f0_anagram,
+  anagram,
+  family = bernoulli()
+) #beta, sd
+
+#set priors 
+AC_anagram_open_prior <- c(
+  prior(normal(0, 1), class = Intercept), #we expect nothing 
+  prior(normal(0, .8), class = b, coef = HC_useJa), #changed from .3
+  prior(normal(0, .5), class = b, coef = EducationGymnasieluddannelse),
+  prior(normal(0, .5), class = b, coef = EducationKort),
+  prior(normal(0, .5), class = b, coef = EducationLang),
+  prior(normal(0, .5), class = b, coef = EducationMellemlang),
+  prior(normal(1, .5), class = sd))
+
+
+## Testing the prior
+#intercept
+p0 <- rnorm(10000, 0.73, 0.44)
+dens(p)
+dens(inv_logit(p)) #
+
+#intercept
+p <- rnorm(10000, 0, 1)
+dens(p)
+dens(inv_logit(p)) #fine, we expect nothing 
+
+#HC use
+p1 <- rnorm(10000, 0, .8) + rnorm(10000, 0.73, 0.44)
+dens(p1)
+dens(inv_logit(p1)) #looks good
+
+#make the first model
+AC_anagram_open_m0 <- brm(
+  AC_f0_anagram,
+  data = anagram,
+  family = bernoulli,
+  prior = AC_anagram_open_prior,
+  control = list(
+    max_treedepth = 10,
+    adapt_delta = 0.99),
+  sample_prior = "only", #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 4, #run chains in parallel
+  file = "AC_anagram_open_m0"
+)
+
+#pp check
+pp_AC_anagram_open_prior <- pp_check(AC_anagram_open_m0 , nsamples = 100) #looks good
+pp_AC_anagram_open_prior #looks good
+
+## Better pp_check
+y_pred <- posterior_linpred(AC_anagram_open_m0)
+dens(inv_logit(y_pred)) #good
+
+#run on all the data
+AC_anagram_open_m1 <- brm(
+  AC_f0_anagram,
+  data = anagram,
+  family = bernoulli,
+  prior = AC_anagram_open_prior,
+  control = list(
+    max_treedepth = 10,
+    adapt_delta = 0.99),
+  sample_prior = T, #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 4, #run chains in parallel
+  file = "AC_anagram_open_m1"
+)
+
+#pp check
+pp_AC_anagram_open_prior_m1 <- pp_check(AC_anagram_open_m1 , nsamples = 100) #looks good
+pp_AC_anagram_open_prior_m1 #looks good
+
+## Better pp_check
+y_pred <- posterior_linpred(AC_anagram_open_m1)
+dens(inv_logit(y_pred)) #good
+
+#run summary
+summary(AC_anagram_open_m1)
+
+hypothesis(AC_anagram_open_m1, "HC_useJa > 0")
+
+```
+
+Accuracy model IQ
+
+```{r}
+mean(IQ$RT) #54.22
+sd(IQ$RT) #57.62
+
+#formula accuracy model
+AC_f0_IQ <- bf(overall_accuracy ~ 1 + HC_use + Education + Menstrual_phase + (1|id))
+
+
+#get prior
+get_prior(
+  AC_f0_IQ,
+  anagram,
+  family = bernoulli()
+) #beta, sd
+
+#informed prior calculations (3.88/8) #mean naturally 0.49
+(3.21/8) #mean HC 0.40
+(1.94/8) #sd naturally 0.24
+(1.89/8) #sd HC 0.24
+
+#calculating log odds mean
+LogOddsMean = logit_scaled(0.49) - logit_scaled(0.40) #0.37
+
+#calculating log odds sd
+LogOddsSD1 = logit_scaled(0.49 + 0.24) - logit_scaled(0.49) #1.03
+LogOddsSD2 = logit_scaled(0.40 + 0.24) - logit_scaled(0.40) #0.98
+
+sqrt(LogOddsSD1^2 + LogOddsSD2^2) #1.43
+
+#set priors 
+AC_IQ_informed_prior <- c(
+  prior(normal(0, .8), class = Intercept),
+  prior(normal(0.37, 1.43), class = b, coef = HC_useJa),
+  prior(normal(0, .5), class = b, coef = EducationGymnasieluddannelse),
+  prior(normal(0, .5), class = b, coef = EducationKort),
+  prior(normal(0, .5), class = b, coef = EducationLang),
+  prior(normal(0, .5), class = b, coef = EducationMellemlang),
+  prior(normal(0, .5), class = b, coef = Menstrual_phaseovulation),
+  prior(normal(0, .5), class = b, coef = Menstrual_phaselutealphase),
+  prior(normal(0, .5), class = b, coef = Menstrual_phasehormonalgroup),
+  prior(normal(1, .5), class = sd))
+
+
+## Testing the prior
+#informed
+p <- rnorm(10000, 0.37, 0.43)
+dens(p)
+dens(inv_logit(p)) #looks good
+
+
+#make the first model
+AC_IQ_informed_m0 <- brm(
+  AC_f0_IQ,
+  data = IQ,
+  family = bernoulli,
+  prior = AC_IQ_informed_prior,
+  # control = list(
+  #   max_treedepth = 20),
+  sample_prior = "only", #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 4, #run chains in parallel
+  file = "AC_IQ_informed_m0"
+)
+
+
+#pp check
+pp_AC_IQ_informed_prior <- pp_check(AC_IQ_informed_m0 , nsamples = 100) #looks good
+pp_AC_IQ_informed_prior
+
+## Better pp_check
+y_pred <- posterior_linpred(AC_IQ_informed_m0)
+dens(inv_logit(y_pred)) #good
+
+#look at all the data
+AC_IQ_informed_m1 <- brm(
+  AC_f0_IQ,
+  data = IQ,
+  family = bernoulli,
+  prior = AC_IQ_informed_prior,
+  # control = list(
+  #   max_treedepth = 20),
+  sample_prior = T, #don't look at the real data yet
+  chains = 2, #to minimize runtime
+  cores = 4, #run chains in parallel
+  file = "AC_IQ_informed_m1"
+)
+
+
+summary(AC_IQ_informed_m1)
+
+```
+
+
+
+
+
+
+
+
