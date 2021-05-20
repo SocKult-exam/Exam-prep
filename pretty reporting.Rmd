@@ -1,0 +1,106 @@
+---
+title: "Untitled"
+author: "Maria"
+date: "20/5/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+pacman::p_load(tidyverse, kableExtra)
+```
+
+
+HC type diff
+```{r}
+#make data frame
+HC_type <- data.frame(Type = c("IUD", "Combined birth-control", "Mini-pill", "Emergency contraception"),                        # Create data frame
+                   Estimate = c("21.54s", "27.93s", "29.08s", "19.89s"),
+                   Est.Error = c("1.14s", "1.19s", "1.22s", "1.68s"),
+                   Lower.CI = c("16.78s", "20.29s", "19.69s", "7.46s"),
+                   Upper.CI = c("27.66s", "38.47s", "42.95s", "54.05s"))
+
+
+kbl(HC_type, col.names = NULL) %>% #col.names = NULL
+  kable_paper("striped", full_width = F, position = "left") %>% 
+  add_header_above(c(" ", "Estimate", "Est. Error", "Lower CI", "Upper CI"), border_left = T)
+```
+
+
+Mens cycle diff
+
+```{r}
+#make data frame
+mens_cycle <- data.frame(Phase = c("Follicular phase", "Ovulatory phase", "Luteal phase", "Hormonal group"),                        # Create data frame
+                   Estimate = c("19.89s", "38.47s", "27.66s", "24.78s"),
+                   Est.Error = c("1.14s", "1.32s", "0.14s", "1.08s"),
+                   Lower.CI = c("15.33s", "22.42s", "21.54s", "21.12s"),
+                   Upper.CI = c("25.79s", "66.69s", "36.23s", "29.08s"))
+
+
+kbl(mens_cycle, col.names = NULL) %>% #col.names = NULL
+  kable_paper("striped", full_width = F, position = "left") %>% 
+  add_header_above(c(" ", "Estimate", "Est. Error", "Lower CI", "Upper CI"), border_left = T)
+
+```
+
+Response time
+
+```{r}
+#make data frame
+resptime <- data.frame(left = c("Intercept", "HC use"),                        # Create data frame
+                   EstimateA = c("22.4s", "17.28s"),
+                   Est.ErrorA = c("1.57s", "1.84s"),
+                   Lower.CIA = c("9.21s", "4.62s"),
+                   Upper.CIA = c("56.26s", "55.15s"),
+                   ERA = c("-", "0.5"),
+                   PostprobA = c("-", "0.33"),
+                   one = c(" ", " "),
+                   two = c(" ", " "),
+                   three = c(" ", " "),
+                   EstimateIQ = c("42.5s", "45.2s"),
+                   Est.ErrorIQ = c("1.49s", "1.52s"),
+                   Lower.CIIQ = c("19.5s", "19.89s"),
+                   Upper.CIIQ = c("95.6s", "111.1s"),
+                   ERIQ = c("-", "1.24"),
+                   PostprobIQ = c("-", "0.55"))
+                   
+                   
+
+kbl(resptime, col.names = NULL) %>% #col.names = NULL
+  kable_paper("striped", full_width = F, position = "left") %>% 
+  add_header_above(c(" ", "Estimate", "Est. error", "Lower CI", "Upper CI", "ER", "Post. prob", " "=3, "Estimate", "Est. error", "Lower CI", "Upper CI", "ER", "Post. prob"), border_left = T) %>% 
+  add_header_above(c(" ", "Anagram Tasks" =6, " "=3, "IQ-puzzle Tasks"=4), border_left = T, font_size = 18)# %>% 
+  #add_header_above(c("Response Time Findings For Both Tasks"=6, " "=8), border_left = T, font_size = 22)
+```
+
+Accuracy
+
+```{r}
+
+```
+
+Power analysis
+
+```{r}
+#make data frame
+power <- data.frame(labs = c("Power", "Number of HC using participants", "Number of naturally cycling participants", "Total number of participants"), # Create data frame
+                   IQ = c("24", "37", "29", "66"),
+                   empty0 = c(" ", " ", " ", " "),
+                   Anagram = c("45", "37", "29", "66"),
+                   empty1 = c(" ", " ", " ", " "),
+                   IQ2 = c("79", "120", "120", "240"),
+                   empty2 = c(" ", " ", " ", " "),
+                   Anagram2 = c("79", "70", "70", "140"))
+
+
+kbl(power, col.names = NULL) %>% #col.names = NULL
+  kable_paper("striped", full_width = F, position = "left") %>% 
+  add_header_above(c(" ", "IQ Tasks", " ", "Anagram Tasks"," ", "IQ Tasks", " ", "Anagram Tasks"), border_left = T) %>% 
+  add_header_above(c(" ", "This Study" =3," ", "Goal-Standard Study"=3), border_left = T)
+```
+
