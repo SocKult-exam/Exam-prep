@@ -81,7 +81,28 @@ kbl(resptime, col.names = NULL) %>% #col.names = NULL
 Accuracy
 
 ```{r}
+#make data frame
+acc <- data.frame(left = c("Naturally Cycling Women (Mellemlang Education)", "HC Using Women (Mellemlang Education)"),                        # Create data frame
+                   probcorA = c("65.7%", "70%"),
+                   Lower.CIA = c("29.3%", "29.9%"),
+                   Upper.CIA = c("89.7%", "91.6%"),
+                   ERA = c("-", "2.19"),
+                   PostprobA = c("-", "0.69"),
+                   one = c(" ", " "),
+                   two = c(" ", " "),
+                   three = c(" ", " "),
+                   EstimateIQ = c("62.7%", "66.4%"),
+                   Lower.CIIQ = c("33.6%", "16.9%"),
+                   Upper.CIIQ = c("81.9%", "94.4%"),
+                   ERIQ = c("-", "1.54"),
+                   PostprobIQ = c("-", "0.61"))
+                   
+                   
 
+kbl(acc, col.names = NULL) %>% #col.names = NULL
+  kable_paper("striped", full_width = F, position = "left") %>% 
+  add_header_above(c(" ", "Prob. of correct answer", "Lower CI (probability)", "Upper CI (probability)", "ER", "Post. prob", " "=3, "Prob. of correct answer", "Lower CI (probability)", "Upper CI (probability)", "ER", "Post. prob"), border_left = T) %>% 
+  add_header_above(c(" ", "Anagram Tasks" =4, " "=3, "IQ-puzzle Tasks"=4), border_left = T, font_size = 20)
 ```
 
 Power analysis
@@ -103,4 +124,41 @@ kbl(power, col.names = NULL) %>% #col.names = NULL
   add_header_above(c(" ", "IQ Tasks", " ", "Anagram Tasks"," ", "IQ Tasks", " ", "Anagram Tasks"), border_left = T) %>% 
   add_header_above(c(" ", "This Study" =3," ", "Goal-Standard Study"=3), border_left = T)
 ```
+Models for investigation before main analysis
+```{r}
+#make data frame
+models1 <- data.frame(model = c("Response Time Difference From HC Type", "Response Time Difference From Menstrual Phase"), # Create data frame
+                      empty = c(" ", " "),
+                   form = c("Response Time ~ 0 + HC Type + (1 | Participant ID)", "Response Time ~ 0 + Menstrual Phase + (1 | Participant ID)"))
 
+kbl(models1, col.names = NULL) %>% #col.names = NULL
+  kable_paper("striped", full_width = F, position = "left") %>% 
+  add_header_above(c("Model", " ", "Model Formula (pseudo-code)"), border_left = T) 
+
+words <- c(10,10,9)
+mean(words)
+sd(words)
+
+```
+
+Other models
+```{r}
+#make data frame
+models1 <- data.frame(model = c("Anagram Response Time (Perserverance)", "IQ-puzzle Response Time (Perserverance)", "Anagram Accuracy (Performance)", "IQ-puzzle Accuracy (Performance)"), # Create data frame
+                      empty = c(" ", " "),
+                   form = c("Response Time ~ 1 + HC Use + Education + (1 | Menstrual Phase) + (1 | Menstrual Phase: Participant ID)", "Response Time ~ 1 + HC Use + Education + (1 | Menstrual Phase) + (1 | Menstrual Phase: Participant ID)", "Accuracy ~ 1 + HC Use + Education + (1 | Menstrual Phase) + (1 | Menstrual Phase: Participant ID)", "Accuracy ~ 1 + HC Use + Education + (1 | Menstrual Phase) + (1 | Menstrual Phase: Participant ID)"))
+
+kbl(models1, col.names = NULL) %>% #col.names = NULL
+  kable_paper("striped", full_width = F, position = "left") %>% 
+  add_header_above(c("Model", " ", "Model Formula (pseudo-code)"), border_left = T) 
+
+
+```
+
+
+
+
+
+
+
+```{r}
